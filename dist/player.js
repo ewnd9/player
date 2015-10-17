@@ -6,9 +6,7 @@ Object.defineProperty(exports, '__esModule', {
 
 var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
-var _get = function get(_x2, _x3, _x4) { var _again = true; _function: while (_again) { desc = parent = getter = undefined; _again = false; var object = _x2,
-    property = _x3,
-    receiver = _x4; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x2 = parent; _x3 = property; _x4 = receiver; _again = true; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+var _get = function get(_x2, _x3, _x4) { var _again = true; _function: while (_again) { var object = _x2, property = _x3, receiver = _x4; desc = parent = getter = undefined; _again = false; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x2 = parent; _x3 = property; _x4 = receiver; _again = true; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
 
@@ -36,13 +34,7 @@ var _util = require('util');
 
 var _util2 = _interopRequireDefault(_util);
 
-var _http = require('http');
-
-var _http2 = _interopRequireDefault(_http);
-
-var _https = require('https');
-
-var _https2 = _interopRequireDefault(_https);
+var _followRedirects = require('follow-redirects');
 
 var _home = require('home');
 
@@ -73,7 +65,7 @@ var defaults = {
   'cache': false,
   'stream': false,
   'shuffle': false,
-  'downloads': _home2['default'](),
+  'downloads': (0, _home2['default'])(),
   'http_proxy': process.env.HTTP_PROXY || process.env.http_proxy || null };
 
 /**
@@ -86,14 +78,16 @@ var Player = (function (_EventEmitter) {
   function Player(songs, params) {
     _classCallCheck(this, Player);
 
-//    if (!songs) return;
+    //    if (!songs)
+    //      return
 
     // Inherits eventEmitter
     _get(Object.getPrototypeOf(Player.prototype), 'constructor', this).call(this);
 
     this.history = [];
+    this.paused = false;
     this.options = _underscore2['default'].extend(defaults, params);
-    this._list = _utils.format(songs || [], this.options.src);
+    this._list = (0, _utils.format)(songs || [], this.options.src);
     if (!this._list || !this._list.length) this._list = [];
   }
 
@@ -122,12 +116,12 @@ var Player = (function (_EventEmitter) {
      * Access with prop `player.list`]
      */
     get: function () {
-      var _this2 = this;
+      var _this = this;
 
       if (!this._list) return;
 
       return this._list.map(function (el) {
-        return el[_this2.options.src];
+        return el[_this.options.src];
       });
     }
   }, {
@@ -147,7 +141,7 @@ var Player = (function (_EventEmitter) {
      * @param  {Number} index [the selected index of first played song]
      */
     value: function play() {
-      var _this3 = this;
+      var _this2 = this;
 
       var index = arguments[0] === undefined ? 0 : arguments[0];
 
@@ -158,19 +152,23 @@ var Player = (function (_EventEmitter) {
       var self = this;
       var song = this._list[index];
 
+      this.paused = false;
       this.read(song[this.options.src], function (err, pool) {
-        if (err) return _this3.emit('error', err);
+        if (err) return _this2.emit('error', err);
 
-        _this3.meta(pool, function (err, data) {
+        _this2.meta(pool, function (err, data) {
           if (!err) song.meta = data;
         });
 
-        pool.pipe(new _lame2['default'].Decoder()).once('format', onPlaying).once('finish', function () {
-          return _this3.next();
+        _this2.lameStream = new _lame2['default'].Decoder();
+
+        pool.pipe(_this2.lameStream).once('format', onPlaying).once('finish', function () {
+          return _this2.next();
         });
 
         function onPlaying(f) {
-          var speaker = new _speaker2['default'](f);
+          self.lameFormat = f;
+          var speaker = new _speaker2['default'](self.lameFormat);
 
           self.speaker = {
             'readableStream': this,
@@ -204,11 +202,29 @@ var Player = (function (_EventEmitter) {
       // Read local file stream if not a valid URI
       if (isLocal) return callback(null, _fs2['default'].createReadStream(src));
 
-      var file = _path2['default'].join(this.options.downloads, _utils.fetchName(src));
+      var file = _path2['default'].join(this.options.downloads, (0, _utils.fetchName)(src));
 
       if (_fs2['default'].existsSync(file)) return callback(null, _fs2['default'].createReadStream(file));
 
       this.download(src, callback);
+    }
+  }, {
+    key: 'pause',
+
+    /**
+     * [Pause or resume audio]
+     * @return {player} this
+     */
+    value: function pause() {
+      if (this.paused) {
+        this.speaker.Speaker = new _speaker2['default'](this.lameFormat);
+        this.lameStream.pipe(this.speaker.Speaker);
+      } else {
+        this.speaker.Speaker.end();
+      }
+
+      this.paused = !this.paused;
+      return this;
     }
   }, {
     key: 'stop',
@@ -238,7 +254,7 @@ var Player = (function (_EventEmitter) {
     value: function next() {
       var list = this._list;
       var current = this.playing;
-      var nextIndex = this.options.shuffle ? _utils.chooseRandom(_underscore2['default'].difference(list, [current._id])) : current._id + 1;
+      var nextIndex = this.options.shuffle ? (0, _utils.chooseRandom)(_underscore2['default'].difference(list, [current._id])) : current._id + 1;
 
       if (nextIndex >= list.length) {
         this.emit('error', 'No next song was found');
@@ -265,7 +281,7 @@ var Player = (function (_EventEmitter) {
       latest._id = this._list.length;
 
       if (_underscore2['default'].isString(song)) {
-        latest._name = _utils.splitName(song);
+        latest._name = (0, _utils.splitName)(song);
         latest[this.options.src] = song;
       }
 
@@ -284,7 +300,7 @@ var Player = (function (_EventEmitter) {
       var called = false;
       var proxyReg = /http:\/\/((?:\d{1,3}\.){3}\d{1,3}):(\d+)/;
       var http_proxy = self.options.http_proxy;
-      var request = src.indexOf('https') === 0 ? _https2['default'] : _http2['default'];
+      var request = src.indexOf('https') === 0 ? _followRedirects.https : _followRedirects.http;
       var query = src;
 
       if (http_proxy && proxyReg.test(http_proxy)) {
@@ -318,7 +334,7 @@ var Player = (function (_EventEmitter) {
         if (!isSave) return callback(null, pool);
 
         // Save this stream as file in download directory
-        var file = _path2['default'].join(self.options.downloads, _utils.fetchName(src));
+        var file = _path2['default'].join(self.options.downloads, (0, _utils.fetchName)(src));
 
         self.emit('downloading', src);
         pool.pipe(_fs2['default'].createWriteStream(file));
@@ -336,7 +352,7 @@ var Player = (function (_EventEmitter) {
 
     // Fetch metadata from local or remote mp3 stream
     value: function meta(stream, callback) {
-      var _this4 = this;
+      var _this3 = this;
 
       try {
         var mm = require('musicmetadata');
@@ -349,7 +365,7 @@ var Player = (function (_EventEmitter) {
       };
 
       stream.on('error', function (err) {
-        return _this4.emit('error', '出错了 ' + err.code + ': ' + err.path);
+        return _this3.emit('error', '出错了 ' + err.code + ': ' + err.path);
       });
 
       return mm(stream, options, callback);
@@ -373,7 +389,7 @@ var Player = (function (_EventEmitter) {
 
         // Move cursor to beginning of line
         stdout.cursorTo(0);
-        stdout.write(_utils.getProgress(total - dots, total, info));
+        stdout.write((0, _utils.getProgress)(total - dots, total, info));
 
         setTimeout(callback, speed);
 
